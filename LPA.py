@@ -1,27 +1,16 @@
 from PIL import Image
 from random import randrange
+from time import time
 
 
 class ImageProcessing:
 	def __init__(self, filename):
 		self.img = Image.open(filename)
-		self.bytes = self.img.tobytes()
-		self.bytesFresh = True
+		temp = self.img.tobytes()
 		self.iwidth, self.iheight = self.img.size
-		self.pixels = []
-		self.getRGB()
-
-	def getRGB(self):
-		bitarr = self.bytes
-		pixelSize = len(bitarr) // self.iheight // self.iwidth
-		for y in range(self.iheight):
-			xcur = []
-			for x in range(self.iwidth):
-				temp = []
-				for z in range(3):
-					temp.append(int(bitarr[(self.iwidth * y + x) * pixelSize + z]))
-				xcur.append(temp)
-			self.pixels.append(xcur)
+		pixelSize = len(temp) // self.iheight // self.iwidth
+		self.pixels = [temp[x] for x in range(len(temp)) if x % pixelSize < 3]
+		self.bytesFresh = True
 
 	def kmeans(self, k, seedGen=None, show=False, toFile=False, verbose=False):
 		if seedGen is None:
@@ -32,29 +21,35 @@ class ImageProcessing:
 		iterCount = 0
 
 		while True:
+			start = time()
 			iterCount += 1
 			reassignment = 0
 			sse = [0 for x in range(k)]
-			newCluster = [[0, 0, 0, 0] for x in range(k)]
+			newCluster = [[0, 0, 0] for x in range(k)]
+			clusterSize = [0 for x in range(k)]
 			for x in range(self.iheight):
 				for y in range(self.iwidth):
+					pos = (x * self.iwidth + y) * 3
+					cur = self.pixels[pos:pos + 3]
 					minSim = 1000
 					index = -1
 					for z in range(k):
-						minSim, index = min((minSim, index), (self.imageSimilarity(cluster[z], self.pixels[x][y]), z))
+						minSim, index = min((minSim, index), (self.imageSimilarity(cluster[z], cur), z))
 					if assignments[x][y] != index:
 						assignments[x][y] = index
 						reassignment += 1
 					sse[index] += minSim
-					newCluster[index] = [
-						newCluster[index][z] + self.pixels[x][y][z] if z < 3 else newCluster[index][z] + 1
-						for z in range(4)]
-			newCluster = [
-				[newCluster[x][y] // newCluster[x][3] if newCluster[x][3] != 0 else newCluster[x][y] for y
-				 in range(3)] for x in range(k)]
+					newCluster[index] = [newCluster[index][z] + cur[z] for z in range(3)]
+					clusterSize[index] += 1
+				print(x)
+			if 0 in clusterSize:
+				if verbose:
+					print('empty cluster detected')
+				clusterSize = [x if x != 0 else 1 for x in clusterSize]
+			newCluster = [[newCluster[x][y] // clusterSize[x] for y in range(3)] for x in range(k)]
 
 			if verbose:
-				print('iteration number:', iterCount)
+				print('k = ', k, '\titer = ', iterCount, '\ttime:', time() - start)
 				print('old cluster:', cluster, sep='\n')
 				print('new cluster:', newCluster, sep='\n')
 				print('number of reassignments:', reassignment)
@@ -62,7 +57,7 @@ class ImageProcessing:
 
 			if toFile or show:
 				fn = self.getFilename('kmean', k, iterCount)
-				tempData = [[newCluster[assignments[x][y]] for y in range(self.iwidth)] for x in range(self.iheight)]
+				tempData = [z for x in assignments for y in x for z in newCluster[y]]
 				self.toImage(tempData, show=show, toFile=toFile, filename=fn)
 
 			if self.kmterminate(k, cluster, newCluster):
@@ -74,10 +69,10 @@ class ImageProcessing:
 			change = 0
 			for y in range(3):
 				temp = abs(old[x][y] - new[x][y])
-				if temp > 1:
+				if temp > 2:
 					return False
 				change += temp
-			if change > 3:
+			if change > 6:
 				return False
 		return True
 
@@ -93,39 +88,28 @@ class ImageProcessing:
 		output = set()
 		while len(output) != k:
 			output.add((randrange(0, self.iheight), randrange(0, self.iwidth)))
-		output = [self.pixels[x[0]][x[1]] for x in output]
+		output = [self.pixels[(x[0] * self.iwidth + x[1]) * 3:((x[0] * self.iwidth + x[1]) * 3) + 3] for x in output]
 		return list(output)
 
 	def getFilename(self, method, k, iteration):
 		return 'output/' + method + '_' + str(k) + '_' + str(iteration) + '.png'
 
 	def toImage(self, data=None, show=True, toFile=False, filename=''):
-		tempImg = Image.frombuffer('RGB', (self.iwidth, self.iheight), bytes(self.toByteArr(data)), 'raw', 'RGB', 0, 1)
+		tempData = bytes(bytearray(self.pixels if data is None else data))
+		tempImg = Image.frombuffer('RGB', (self.iwidth, self.iheight), tempData, 'raw', 'RGB', 0, 1)
 		if show:
 			tempImg.show()
 		if toFile:
 			tempImg.save(filename, 'png')
 
-	def toByteArr(self, data=None):
-		if data is None:
-			if not self.bytesFresh:
-				self.bytes = [z for x in self.pixels for y in x for z in y]
-				self.bytes = bytearray(self.bytes)
-				self.bytesFresh = True
-			return self.bytes
-		else:
-			output = [z for x in data for y in x for z in y]
-			output = bytearray(output)
-			return output
-
 
 if __name__ == '__main__':
 	tester = ImageProcessing('imageData/image003.jpg')
 	# tester.toImage()
-	tester.kmeans(int(input("Enter k:")), toFile=True, verbose=True)
+	# tester.kmeans(int(input("Enter k:")), toFile=True, verbose=True)
+	tester.kmeans(2, toFile=True, verbose=True)
 
 
-# TODO do i even need to make 3d array and change to int?
 # TODO can kmean be optimized? 
 # TODO cluster only if touching
 # TODO B
